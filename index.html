@@ -1,1 +1,281 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>GirlUp Bloom | Gate Scanner</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 28px 16px;
+      min-height: 100vh;
+      background: #651B25;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+
+    .container {
+      max-width: 440px;
+      margin: auto;
+    }
+
+    h1 {
+      color: #F2C879;
+      letter-spacing: 2px;
+      margin-bottom: 6px;
+    }
+
+    .subtitle { color: #E8BFC8; }
+
+    #reader {
+      margin-top: 28px;
+      background: white;
+      color: black;
+      border-radius: 14px;
+      padding: 8px;
+      overflow: hidden;
+    }
+
+    #message {
+      margin: 18px 0;
+      color: #E8BFC8;
+    }
+
+    #result {
+      display: none;
+      margin-top: 20px;
+      padding: 22px;
+      border-radius: 14px;
+      background: white;
+      color: #222;
+    }
+
+    #result.success { border: 5px solid #16A34A; }
+    #result.rejected { border: 5px solid #DC2626; }
+
+    #result h2 { margin-top: 0; }
+
+    button {
+      border: none;
+      border-radius: 9px;
+      padding: 15px 24px;
+      margin-top: 18px;
+      background: #F2C879;
+      color: #651B25;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .small {
+      margin-top: 28px;
+      font-size: 12px;
+      color: #E8BFC8;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+
+    <h1>GIRLUP BLOOM</h1>
+    <div class="subtitle">
+      DIWALI CELEBRATION · GATE CHECK
+    </div>
+
+    <div id="reader"></div>
+
+    <div id="message">Preparing scanner...</div>
+
+    <div id="result">
+      <h2 id="resultTitle"></h2>
+      <p id="guestName"></p>
+      <p id="passId"></p>
+      <p id="details"></p>
+      <button onclick="scanAgain()">SCAN NEXT GUEST</button>
+    </div>
+
+    <div class="small">
+      OFFICIAL ENTRY VERIFICATION SYSTEM
+    </div>
+
+  </div>
+
+  <script>
+    // IMPORTANT: Replace this with your Apps Script /exec URL
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKeGzRyDwKDLtI99Jekkkcz9j418iXDqfRy6LG1pz7M5v42THupEl1ntcW2GEOHg8uRw/exec";
+
+    let scanner;
+    let processing = false;
+    let requestTimer;
+
+    function startScanner() {
+      const message = document.getElementById("message");
+
+      if (typeof Html5Qrcode === "undefined") {
+        message.textContent = "QR library failed to load.";
+        return;
+      }
+
+      if (!navigator.mediaDevices ||
+          !navigator.mediaDevices.getUserMedia) {
+        message.textContent = "Camera API unavailable. Open in Chrome.";
+        return;
+      }
+
+      message.textContent = "Requesting camera permission...";
+
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      })
+      .then(function(stream) {
+
+        // Stop the temporary permission-check stream
+        stream.getTracks().forEach(track => track.stop());
+
+        scanner = new Html5Qrcode("reader");
+
+        return scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 230, height: 230 } },
+
+          function(decodedText) {
+            if (processing) return;
+
+            processing = true;
+            scanner.pause(true);
+
+            message.textContent = "Verifying pass...";
+
+            verifyWithServer(decodedText);
+          },
+
+          function() {}
+        );
+      })
+      .then(function() {
+        message.textContent = "Camera ready. Scan a guest pass.";
+      })
+      .catch(function(error) {
+        message.textContent =
+          "Camera error: " + error.name + " — " + error.message;
+      });
+    }
+
+    function verifyWithServer(token) {
+      if (APPS_SCRIPT_URL.includes("PASTE_YOUR")) {
+        showError("Apps Script URL has not been configured.");
+        return;
+      }
+
+      // JSONP callback receives the server response
+      window.handleVerification = function(response) {
+        clearTimeout(requestTimer);
+        showResult(response);
+      };
+
+      const script = document.createElement("script");
+
+      script.src =
+        APPS_SCRIPT_URL +
+        "?callback=handleVerification" +
+        "&token=" + encodeURIComponent(token) +
+        "&t=" + Date.now();
+
+      script.onerror = function() {
+        clearTimeout(requestTimer);
+        showError("Could not contact the verification server.");
+      };
+
+      requestTimer = setTimeout(function() {
+        script.remove();
+        showError("Server timed out. Please try again.");
+      }, 15000);
+
+      document.body.appendChild(script);
+    }
+
+    function showResult(response) {
+      const box = document.getElementById("result");
+      box.style.display = "block";
+
+      if (response.status === "SUCCESS") {
+        box.className = "success";
+        document.getElementById("resultTitle").textContent =
+          "ENTRY APPROVED";
+        document.getElementById("guestName").textContent =
+          "Guest: " + response.name;
+        document.getElementById("passId").textContent =
+          "Pass: " + response.passId;
+        document.getElementById("details").textContent =
+          "Entry recorded successfully.";
+
+      } else if (response.status === "ALREADY_USED") {
+        box.className = "rejected";
+        document.getElementById("resultTitle").textContent =
+          "ALREADY USED";
+        document.getElementById("guestName").textContent =
+          "Guest: " + response.name;
+        document.getElementById("passId").textContent =
+          "Pass: " + response.passId;
+        document.getElementById("details").textContent =
+          "This pass has already been redeemed.";
+
+      } else if (response.status === "INVALID") {
+        box.className = "rejected";
+        document.getElementById("resultTitle").textContent =
+          "INVALID PASS";
+        document.getElementById("guestName").textContent = "";
+        document.getElementById("passId").textContent = "";
+        document.getElementById("details").textContent =
+          "No matching valid pass found.";
+
+      } else {
+        showError(response.message || "Verification failed.");
+        return;
+      }
+
+      document.getElementById("message").textContent =
+        "Verification complete.";
+    }
+
+    function showError(message) {
+      clearTimeout(requestTimer);
+
+      const box = document.getElementById("result");
+      box.style.display = "block";
+      box.className = "rejected";
+
+      document.getElementById("resultTitle").textContent =
+        "VERIFICATION ERROR";
+      document.getElementById("guestName").textContent = "";
+      document.getElementById("passId").textContent = "";
+      document.getElementById("details").textContent = message;
+      document.getElementById("message").textContent =
+        "Entry not verified.";
+    }
+
+    function scanAgain() {
+      document.getElementById("result").style.display = "none";
+      processing = false;
+
+      document.getElementById("message").textContent =
+        "Ready for next guest.";
+
+      scanner.resume();
+    }
+
+    startScanner();
+  </script>
+</body>
+</html>
+
